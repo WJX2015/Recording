@@ -2,6 +2,7 @@ package com.example.lenovo_g50_70.recording;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.os.Environment;
 import android.os.Handler;
@@ -26,6 +27,7 @@ import java.util.logging.LoggingPermission;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
+import butterknife.OnClick;
 
 public class FileActivity extends BaseActivity {
 
@@ -43,6 +45,10 @@ public class FileActivity extends BaseActivity {
     private long mStopRecordTime;
 
     private Handler mHandler;
+
+    //主线程和后台播放线程数据同步
+    private volatile boolean mIsPlaying;
+    private MediaPlayer mMediaPlayer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -235,6 +241,8 @@ public class FileActivity extends BaseActivity {
         mExecutorService.shutdownNow();
         //停止录音
         releaseRecorder();
+        //停止录音播放
+        stopPlay();
     }
 
     public void showToast(String msg) {
@@ -246,4 +254,104 @@ public class FileActivity extends BaseActivity {
         mToast.show();
     }
 
+    /**
+     * 播放录音
+     */
+    @OnClick(R.id.btn_play)
+    public void play() {
+        //检查当前状态，防止重复播放
+        if (mAudioFile != null && !mIsPlaying) {
+            //设置当前播放状态
+            mIsPlaying = true;
+            //提交后台任务，开始播放
+            mExecutorService.submit(new Runnable() {
+                @Override
+                public void run() {
+                    doPlay(mAudioFile);
+                }
+            });
+        }
+    }
+
+    /**
+     * 播放录音的逻辑
+     *
+     * @param file
+     */
+    private void doPlay(File file) {
+        //配置播放器 MediaPlayer
+        mMediaPlayer = new MediaPlayer();
+
+        try {
+            //设置声音文件
+            mMediaPlayer.setDataSource(file.getAbsolutePath());
+            //设置监听回调
+            mMediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                @Override
+                public void onCompletion(MediaPlayer mp) {
+                    //播放结束，释放播放器
+                    stopPlay();
+                }
+            });
+            mMediaPlayer.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                @Override
+                public boolean onError(MediaPlayer mp, int what, int extra) {
+                    //提示用户
+                    playFail();
+                    //释放播放器
+                    stopPlay();
+                    //错误已经处理
+                    return true;
+                }
+            });
+            //配置音量，是否循环
+            mMediaPlayer.setVolume(1, 1);
+            //不循环播放
+            mMediaPlayer.setLooping(false);
+            //准备工作,开始播放
+            mMediaPlayer.prepare();
+            mMediaPlayer.start();
+        } catch (IOException | RuntimeException e) {
+            //捕获异常，避免闪退
+            e.printStackTrace();
+            //播放失败
+            playFail();
+            //停止播放
+            stopPlay();
+        }
+
+
+    }
+
+    /**
+     * 播放失败，提醒用户
+     */
+    private void playFail() {
+        //在主线程Toast提示
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                showToast("播放失败");
+            }
+        });
+    }
+
+    /**
+     * 录音停止播放的逻辑
+     */
+    private void stopPlay() {
+        //重置播放状态
+        mIsPlaying = false;
+        //释放播放器
+        if (mMediaPlayer != null) {
+            //重置监听器，防止内存泄漏
+            mMediaPlayer.setOnCompletionListener(null);
+            mMediaPlayer.setOnErrorListener(null);
+
+            mMediaPlayer.stop();
+            mMediaPlayer.reset();
+            mMediaPlayer.release();
+            mMediaPlayer = null;
+        }
+    }
 }
